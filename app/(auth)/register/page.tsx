@@ -92,20 +92,25 @@ export default function RegisterPage() {
 
     setLoading(true)
 
-    const result = register({
-      firstName: values.firstName,
-      lastName: values.lastName,
-      phone: values.phone,
-      password: values.password,
-      confirmPassword: values.confirmPassword,
-    })
+    try {
+      const result = await register({
+        firstName: values.firstName,
+        lastName: values.lastName,
+        phone: values.phone,
+        password: values.password,
+        confirmPassword: values.confirmPassword,
+      })
 
-    if (!result.ok) {
-      setServerError(result.error ?? 'Unable to register.')
+      if (!result.ok) {
+        setServerError(result.error ?? 'Unable to register.')
+      } else {
+        // Registration successful, redirect to home
+        router.push('/')
+      }
+    } catch (error) {
+      setServerError(error instanceof Error ? error.message : 'An unexpected error occurred')
+    } finally {
       setLoading(false)
-    } else {
-      // Registration successful, redirect to home
-      router.push('/')
     }
   }
 
