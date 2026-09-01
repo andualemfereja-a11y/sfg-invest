@@ -5,15 +5,25 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react'
-import type { Deposit, Investment, Plan, User, Withdrawal } from './types'
-import { store, generateId } from './storage'
-import { recalcInvestment, computeInvestment, type InvestmentComputed } from './earnings'
-import { normalizePhone } from './format'
-import { MIN_WITHDRAWAL, RETURN_DAYS, MS_PER_DAY, WITHDRAWAL_PENDING_HOURS } from './plans'
+import { useRouter } from 'next/navigation'
+import type { Plan } from './types'
+import { registerAction, loginAction, logoutAction, getSessionAction } from '@/app/actions/auth'
+import { investAction, getInvestmentsAction, recalculateInvestmentAction } from '@/app/actions/investments'
+import { requestWithdrawalAction, getWithdrawalsAction } from '@/app/actions/withdrawals'
+import { getFinancialSummaryAction } from '@/app/actions/financial'
+import { getDepositsAction } from '@/app/actions/deposits'
+
+export interface User {
+  id: string
+  firstName: string
+  lastName: string
+  phone: string
+  baseBalance: number
+  createdAt: Date
+}
 
 export interface FinanceSummary {
   availableBalance: number
@@ -21,6 +31,43 @@ export interface FinanceSummary {
   totalEarned: number
   todayEarnings: number
   pendingWithdrawals: number
+}
+
+export interface Investment {
+  id: string
+  userId: string
+  planId: string
+  planName: string
+  amount: number
+  profitRate: number
+  returnDays: number
+  startTimestamp: number
+  endTimestamp: number
+  accumulatedEarnings: number
+  lastCalculatedTimestamp: number
+  status: 'active' | 'completed'
+}
+
+export interface Withdrawal {
+  id: string
+  userId: string
+  amount: number
+  method: string
+  telebirrPhone: string
+  status: 'pending' | 'completed' | 'rejected'
+  requestedAt: number
+  pendingUntil: number
+  completedAt: number | null
+}
+
+export interface Deposit {
+  id: string
+  userId: string
+  amount: number
+  method: string
+  status: 'pending' | 'confirmed' | 'rejected'
+  createdAt: Date
+  updatedAt: Date
 }
 
 interface Result {
@@ -39,296 +86,264 @@ interface RegisterInput {
 interface AppContextValue {
   ready: boolean
   user: User | null
-  investments: InvestmentComputed[]
+  investments: Investment[]
   deposits: Deposit[]
   withdrawals: Withdrawal[]
   summary: FinanceSummary
-  register: (input: RegisterInput) => Result
-  login: (phone: string, password: string) => Result
-  logout: () => void
-  invest: (plan: Plan, amount: number) => Result
-  requestWithdrawal: (telebirrPhoneRaw: string, amount: number) => Result
+  register: (input: RegisterInput) => Promise<Result>
+  login: (phone: string, password: string) => Promise<Result>
+  logout: () => Promise<void>
+  invest: (plan: Plan, amount: number) => Promise<Result>
+  requestWithdrawal: (telebirrPhoneRaw: string, amount: number) => Promise<Result>
 }
 
-const AppContext = createContext<AppContextValue | null>(null)
+export const AppContext = createContext<AppContextValue | null>(null)
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false)
-  const [userId, setUserId] = useState<string | null>(null)
-  const [users, setUsers] = useState<User[]>([])
-  const [investments, setInvestmentsState] = useState<Investment[]>([])
+  const [user, setUser] = useState<User | null>(null)
+  const [investments, setInvestments] = useState<Investment[]>([])
   const [deposits, setDeposits] = useState<Deposit[]>([])
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([])
-  const [now, setNow] = useState(() => Date.now())
+  const [summary, setSummary] = useState<FinanceSummary>({
+    availableBalance: 0,
+    totalInvested: 0,
+    totalEarned: 0,
+    todayEarnings: 0,
+    pendingWithdrawals: 0,
+  })
   const bootstrapped = useRef(false)
+  const router = useRouter()
 
-  // Initial load from localStorage
+  // Initialize user from database session on mount
   useEffect(() => {
     if (bootstrapped.current) return
     bootstrapped.current = true
-    setUsers(store.getUsers())
-    setUserId(store.getSession())
-    setInvestmentsState(store.getInvestments())
-    setDeposits(store.getDeposits())
-    setWithdrawals(store.getWithdrawals())
-    setReady(true)
-  }, [])
 
-  // Recompute earnings + withdrawal status transitions on an interval.
-  const reconcile = useCallback(() => {
-    const t = Date.now()
-    setNow(t)
-
-    // Recalculate all investments idempotently and persist if changed.
-    let invChanged = false
-    const currentInv = store.getInvestments()
-    const nextInv = currentInv.map((inv) => {
-      const updated = recalcInvestment(inv, t)
-      if (
-        updated.accumulatedEarnings !== inv.accumulatedEarnings ||
-        updated.status !== inv.status
-      ) {
-        invChanged = true
+    const initializeAuth = async () => {
+      try {
+        const result = await getSessionAction()
+        if (result.ok && result.user) {
+          setUser(result.user)
+          // Fetch financial summary and investments
+          await Promise.all([
+            refreshFinancial(),
+            refreshInvestments(),
+            refreshDeposits(),
+            refreshWithdrawals(),
+          ])
+        }
+      } catch (error) {
+        console.error('Failed to initialize auth:', error)
+      } finally {
+        setReady(true)
       }
-      return updated
-    })
-    if (invChanged) {
-      store.setInvestments(nextInv)
-      setInvestmentsState(nextInv)
     }
 
-    // Transition pending withdrawals to completed once the pending window elapses.
-    let wChanged = false
-    const currentW = store.getWithdrawals()
-    const nextW = currentW.map((w) => {
-      if (w.status === 'pending' && t >= w.pendingUntil) {
-        wChanged = true
-        return { ...w, status: 'completed' as const, completedAt: t }
-      }
-      return w
-    })
-    if (wChanged) {
-      store.setWithdrawals(nextW)
-      setWithdrawals(nextW)
-    }
+    initializeAuth()
   }, [])
 
+  // Recalculate investments every 15 seconds
   useEffect(() => {
-    if (!ready) return
-    reconcile()
-    const id = window.setInterval(reconcile, 15000)
-    return () => window.clearInterval(id)
-  }, [ready, reconcile])
+    if (!ready || !user) return
 
-  const user = useMemo(
-    () => users.find((u) => u.id === userId) ?? null,
-    [users, userId],
-  )
-
-  const userInvestments = useMemo(
-    () => investments.filter((i) => i.userId === userId),
-    [investments, userId],
-  )
-
-  const computedInvestments = useMemo<InvestmentComputed[]>(
-    () =>
-      userInvestments
-        .map((i) => computeInvestment(i, now))
-        .sort((a, b) => b.startTimestamp - a.startTimestamp),
-    [userInvestments, now],
-  )
-
-  const userDeposits = useMemo(
-    () =>
-      deposits
-        .filter((d) => d.userId === userId)
-        .sort((a, b) => b.createdAt - a.createdAt),
-    [deposits, userId],
-  )
-
-  const userWithdrawals = useMemo(
-    () =>
-      withdrawals
-        .filter((w) => w.userId === userId)
-        .sort((a, b) => b.requestedAt - a.requestedAt),
-    [withdrawals, userId],
-  )
-
-  const summary = useMemo<FinanceSummary>(() => {
-    const totalEarned = computedInvestments.reduce(
-      (s, i) => s + i.accumulatedEarnings,
-      0,
-    )
-    const totalInvested = computedInvestments
-      .filter((i) => i.status === 'active')
-      .reduce((s, i) => s + i.amount, 0)
-    const todayEarnings = computedInvestments.reduce((s, i) => s + i.todayEarnings, 0)
-    const pendingWithdrawals = userWithdrawals
-      .filter((w) => w.status === 'pending')
-      .reduce((s, w) => s + w.amount, 0)
-    const base = user?.baseBalance ?? 0
-    const availableBalance = Math.max(0, base + totalEarned)
-    return {
-      availableBalance,
-      totalInvested,
-      totalEarned,
-      todayEarnings,
-      pendingWithdrawals,
+    const recalculateAll = async () => {
+      try {
+        for (const inv of investments) {
+          if (inv.status === 'active') {
+            await recalculateInvestmentAction(inv.id)
+          }
+        }
+        await refreshFinancial()
+      } catch (error) {
+        console.error('Failed to recalculate investments:', error)
+      }
     }
-  }, [computedInvestments, userWithdrawals, user])
 
-  // ---- Actions ----
+    const interval = setInterval(recalculateAll, 15000)
+    return () => clearInterval(interval)
+  }, [ready, user, investments])
 
-  const persistUsers = useCallback((next: User[]) => {
-    store.setUsers(next)
-    setUsers(next)
+  const refreshFinancial = useCallback(async () => {
+    try {
+      const result = await getFinancialSummaryAction()
+      if (result.ok && result.summary) {
+        setSummary(result.summary)
+      }
+    } catch (error) {
+      console.error('Failed to refresh financial:', error)
+    }
+  }, [])
+
+  const refreshInvestments = useCallback(async () => {
+    try {
+      const result = await getInvestmentsAction()
+      if (result.ok && result.investments) {
+        setInvestments(result.investments)
+      }
+    } catch (error) {
+      console.error('Failed to refresh investments:', error)
+    }
+  }, [])
+
+  const refreshDeposits = useCallback(async () => {
+    try {
+      const result = await getDepositsAction()
+      if (result.ok && result.deposits) {
+        setDeposits(result.deposits)
+      }
+    } catch (error) {
+      console.error('Failed to refresh deposits:', error)
+    }
+  }, [])
+
+  const refreshWithdrawals = useCallback(async () => {
+    try {
+      const result = await getWithdrawalsAction()
+      if (result.ok && result.withdrawals) {
+        setWithdrawals(result.withdrawals)
+      }
+    } catch (error) {
+      console.error('Failed to refresh withdrawals:', error)
+    }
   }, [])
 
   const register = useCallback(
-    (input: RegisterInput): Result => {
-      const firstName = input.firstName.trim()
-      const lastName = input.lastName.trim()
-      if (!firstName) return { ok: false, error: 'First name is required.' }
-      if (!lastName) return { ok: false, error: 'Last name is required.' }
-      const phone = normalizePhone(input.phone)
-      if (!phone)
-        return { ok: false, error: 'Enter a valid Ethiopian phone number.' }
-      if (!input.password) return { ok: false, error: 'Password is required.' }
-      if (input.password.length < 6)
-        return { ok: false, error: 'Password must be at least 6 characters.' }
-      if (input.password !== input.confirmPassword)
-        return { ok: false, error: 'Passwords do not match.' }
-      const existing = store.getUsers()
-      if (existing.some((u) => u.phone === phone))
-        return { ok: false, error: 'This phone number is already registered.' }
-
-      const newUser: User = {
-        id: generateId('user'),
-        firstName,
-        lastName,
-        phone,
-        password: input.password,
-        baseBalance: 0,
-        createdAt: Date.now(),
+    async (input: RegisterInput): Promise<Result> => {
+      try {
+        const result = await registerAction(input)
+        if (result.ok && result.user) {
+          setUser(result.user)
+          await Promise.all([
+            refreshFinancial(),
+            refreshInvestments(),
+            refreshDeposits(),
+            refreshWithdrawals(),
+          ])
+          router.push('/')
+          return { ok: true }
+        }
+        return { ok: false, error: result.error }
+      } catch (error) {
+        if (error instanceof Error) {
+          return { ok: false, error: error.message }
+        }
+        return { ok: false, error: 'Registration failed' }
       }
-      const next = [...existing, newUser]
-      persistUsers(next)
-      store.setSession(newUser.id)
-      setUserId(newUser.id)
-      return { ok: true }
     },
-    [persistUsers],
+    [refreshFinancial, refreshInvestments, refreshDeposits, refreshWithdrawals, router],
   )
 
-  const login = useCallback((phoneRaw: string, password: string): Result => {
-    const phone = normalizePhone(phoneRaw)
-    if (!phone) return { ok: false, error: 'Enter a valid phone number.' }
-    if (!password) return { ok: false, error: 'Password is required.' }
-    const found = store.getUsers().find((u) => u.phone === phone)
-    if (!found || found.password !== password)
-      return { ok: false, error: 'Incorrect phone number or password.' }
-    store.setSession(found.id)
-    setUsers(store.getUsers())
-    setUserId(found.id)
-    return { ok: true }
-  }, [])
+  const login = useCallback(
+    async (phone: string, password: string): Promise<Result> => {
+      try {
+        const result = await loginAction({ phone, password })
+        if (result.ok && result.user) {
+          setUser(result.user)
+          await Promise.all([
+            refreshFinancial(),
+            refreshInvestments(),
+            refreshDeposits(),
+            refreshWithdrawals(),
+          ])
+          router.push('/')
+          return { ok: true }
+        }
+        return { ok: false, error: result.error }
+      } catch (error) {
+        if (error instanceof Error) {
+          return { ok: false, error: error.message }
+        }
+        return { ok: false, error: 'Login failed' }
+      }
+    },
+    [refreshFinancial, refreshInvestments, refreshDeposits, refreshWithdrawals, router],
+  )
 
-  const logout = useCallback(() => {
-    store.clearSession()
-    setUserId(null)
-  }, [])
+  const logout = useCallback(async () => {
+    try {
+      await logoutAction()
+      setUser(null)
+      setInvestments([])
+      setDeposits([])
+      setWithdrawals([])
+      setSummary({
+        availableBalance: 0,
+        totalInvested: 0,
+        totalEarned: 0,
+        todayEarnings: 0,
+        pendingWithdrawals: 0,
+      })
+      router.push('/login')
+    } catch (error) {
+      console.error('Logout failed:', error)
+    }
+  }, [router])
 
   const invest = useCallback(
-    (plan: Plan, amount: number): Result => {
-      if (!userId || !user) return { ok: false, error: 'You must be signed in.' }
-      if (!Number.isFinite(amount) || amount <= 0)
-        return { ok: false, error: 'Enter a valid investment amount.' }
-      if (amount < plan.minInvestment)
-        return {
-          ok: false,
-          error: `Minimum investment for ${plan.name} is ${plan.minInvestment.toLocaleString('en-US')} ETB.`,
+    async (plan: Plan, amount: number): Promise<Result> => {
+      if (!user) return { ok: false, error: 'You must be signed in' }
+
+      try {
+        const result = await investAction({
+          planId: plan.id,
+          planName: plan.name,
+          amount,
+          profitRate: plan.dailyProfitRate,
+        })
+
+        if (result.ok) {
+          await Promise.all([
+            refreshFinancial(),
+            refreshInvestments(),
+          ])
+          return { ok: true }
         }
-      if (amount > summary.availableBalance)
-        return { ok: false, error: 'Insufficient available balance.' }
-
-      const start = Date.now()
-      const dailyEarnings = amount * plan.dailyProfitRate
-      const investment: Investment = {
-        id: generateId('inv'),
-        userId,
-        planId: plan.id,
-        planName: plan.name,
-        amount,
-        profitRate: plan.dailyProfitRate,
-        returnDays: RETURN_DAYS,
-        startTimestamp: start,
-        endTimestamp: start + RETURN_DAYS * MS_PER_DAY,
-        accumulatedEarnings: 0,
-        lastCalculatedTimestamp: start,
-        status: 'active',
+        return { ok: false, error: result.error }
+      } catch (error) {
+        if (error instanceof Error) {
+          return { ok: false, error: error.message }
+        }
+        return { ok: false, error: 'Investment failed' }
       }
-      const nextInv = [...store.getInvestments(), investment]
-      store.setInvestments(nextInv)
-      setInvestmentsState(nextInv)
-
-      // Deduct principal from base balance.
-      const nextUsers = store
-        .getUsers()
-        .map((u) => (u.id === userId ? { ...u, baseBalance: u.baseBalance - amount } : u))
-      persistUsers(nextUsers)
-      setNow(Date.now())
-      void dailyEarnings
-      return { ok: true }
     },
-    [userId, user, summary.availableBalance, persistUsers],
+    [user, refreshFinancial, refreshInvestments],
   )
 
   const requestWithdrawal = useCallback(
-    (telebirrPhoneRaw: string, amount: number): Result => {
-      if (!userId || !user) return { ok: false, error: 'You must be signed in.' }
-      const telebirrPhone = normalizePhone(telebirrPhoneRaw)
-      if (!telebirrPhone)
-        return { ok: false, error: 'Enter a valid Telebirr phone number.' }
-      if (!Number.isFinite(amount) || amount <= 0)
-        return { ok: false, error: 'Enter a valid withdrawal amount.' }
-      if (amount < MIN_WITHDRAWAL)
-        return { ok: false, error: `Minimum withdrawal amount is ${MIN_WITHDRAWAL} ETB.` }
-      if (amount > summary.availableBalance)
-        return { ok: false, error: 'Insufficient available balance.' }
+    async (telebirrPhoneRaw: string, amount: number): Promise<Result> => {
+      if (!user) return { ok: false, error: 'You must be signed in' }
 
-      const requestedAt = Date.now()
-      const withdrawal: Withdrawal = {
-        id: generateId('wd'),
-        userId,
-        amount,
-        method: 'telebirr',
-        telebirrPhone,
-        status: 'pending',
-        requestedAt,
-        pendingUntil: requestedAt + WITHDRAWAL_PENDING_HOURS * 60 * 60 * 1000,
-        completedAt: null,
+      try {
+        const result = await requestWithdrawalAction({
+          telebirrPhone: telebirrPhoneRaw,
+          amount,
+        })
+
+        if (result.ok) {
+          await Promise.all([
+            refreshFinancial(),
+            refreshWithdrawals(),
+          ])
+          return { ok: true }
+        }
+        return { ok: false, error: result.error }
+      } catch (error) {
+        if (error instanceof Error) {
+          return { ok: false, error: error.message }
+        }
+        return { ok: false, error: 'Withdrawal request failed' }
       }
-      const nextW = [...store.getWithdrawals(), withdrawal]
-      store.setWithdrawals(nextW)
-      setWithdrawals(nextW)
-
-      // Reserve/deduct amount from base balance.
-      const nextUsers = store
-        .getUsers()
-        .map((u) => (u.id === userId ? { ...u, baseBalance: u.baseBalance - amount } : u))
-      persistUsers(nextUsers)
-      setNow(Date.now())
-      return { ok: true }
     },
-    [userId, user, summary.availableBalance, persistUsers],
+    [user, refreshFinancial, refreshWithdrawals],
   )
 
   const value: AppContextValue = {
     ready,
     user,
-    investments: computedInvestments,
-    deposits: userDeposits,
-    withdrawals: userWithdrawals,
+    investments,
+    deposits,
+    withdrawals,
     summary,
     register,
     login,
