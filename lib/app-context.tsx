@@ -21,8 +21,8 @@ export interface User {
   firstName: string
   lastName: string
   phone: string
-  baseBalance: number
-  createdAt: Date
+  baseBalance: number | string
+  createdAt: Date | string
 }
 
 export interface FinanceSummary {
@@ -38,36 +38,36 @@ export interface Investment {
   userId: string
   planId: string
   planName: string
-  amount: number
-  profitRate: number
+  amount: number | string
+  profitRate: number | string
   returnDays: number
-  startTimestamp: number
-  endTimestamp: number
-  accumulatedEarnings: number
-  lastCalculatedTimestamp: number
+  startTimestamp: number | string
+  endTimestamp: number | string
+  accumulatedEarnings: number | string
+  lastCalculatedTimestamp: number | string
   status: 'active' | 'completed'
 }
 
 export interface Withdrawal {
   id: string
   userId: string
-  amount: number
+  amount: number | string
   method: string
   telebirrPhone: string
   status: 'pending' | 'completed' | 'rejected'
-  requestedAt: number
-  pendingUntil: number
-  completedAt: number | null
+  requestedAt: number | string
+  pendingUntil: number | string
+  completedAt: number | string | null
 }
 
 export interface Deposit {
   id: string
   userId: string
-  amount: number
+  amount: number | string
   method: string
   status: 'pending' | 'confirmed' | 'rejected'
-  createdAt: Date
-  updatedAt: Date
+  createdAt: Date | string
+  updatedAt: Date | string
 }
 
 interface Result {
@@ -212,19 +212,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (input: RegisterInput): Promise<Result> => {
       try {
         const result = await registerAction(input)
-        if (result.ok && result.user) {
-          setUser(result.user)
-          await Promise.all([
-            refreshFinancial(),
-            refreshInvestments(),
-            refreshDeposits(),
-            refreshWithdrawals(),
-          ])
-          router.push('/')
-          return { ok: true }
+        if (result.ok) {
+          // After registration, get the session to set user
+          const sessionResult = await getSessionAction()
+          if (sessionResult.ok && sessionResult.user) {
+            setUser(sessionResult.user)
+            await Promise.all([
+              refreshFinancial(),
+              refreshInvestments(),
+              refreshDeposits(),
+              refreshWithdrawals(),
+            ])
+            router.push('/')
+            return { ok: true }
+          }
         }
         return { ok: false, error: result.error }
       } catch (error) {
+        console.error('Registration error:', error)
         if (error instanceof Error) {
           return { ok: false, error: error.message }
         }
@@ -238,19 +243,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     async (phone: string, password: string): Promise<Result> => {
       try {
         const result = await loginAction({ phone, password })
-        if (result.ok && result.user) {
-          setUser(result.user)
-          await Promise.all([
-            refreshFinancial(),
-            refreshInvestments(),
-            refreshDeposits(),
-            refreshWithdrawals(),
-          ])
-          router.push('/')
-          return { ok: true }
+        if (result.ok) {
+          // After login, get the session to set user
+          const sessionResult = await getSessionAction()
+          if (sessionResult.ok && sessionResult.user) {
+            setUser(sessionResult.user)
+            await Promise.all([
+              refreshFinancial(),
+              refreshInvestments(),
+              refreshDeposits(),
+              refreshWithdrawals(),
+            ])
+            router.push('/')
+            return { ok: true }
+          }
         }
         return { ok: false, error: result.error }
       } catch (error) {
+        console.error('Login error:', error)
         if (error instanceof Error) {
           return { ok: false, error: error.message }
         }
@@ -301,6 +311,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         return { ok: false, error: result.error }
       } catch (error) {
+        console.error('Investment error:', error)
         if (error instanceof Error) {
           return { ok: false, error: error.message }
         }
@@ -329,6 +340,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
         return { ok: false, error: result.error }
       } catch (error) {
+        console.error('Withdrawal error:', error)
         if (error instanceof Error) {
           return { ok: false, error: error.message }
         }
