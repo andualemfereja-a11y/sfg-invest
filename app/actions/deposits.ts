@@ -4,6 +4,8 @@
 import { prisma } from '@/lib/db'
 import { depositSchema } from '@/lib/validation'
 import { getSessionAction } from './auth'
+import { serializeData } from '@/lib/serialize'
+import { Decimal } from '@prisma/client/runtime/library'
 
 export interface DepositResult {
   ok: boolean
@@ -52,6 +54,7 @@ export async function confirmDepositAction(depositId: string): Promise<DepositRe
 
     return { ok: true, depositId: result.id }
   } catch (error) {
+    console.error('Confirm deposit error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
@@ -75,8 +78,12 @@ export async function getDepositsAction(): Promise<{
       orderBy: { createdAt: 'desc' },
     })
 
-    return { ok: true, deposits }
+    // Serialize deposits to handle Decimal types
+    const serializedDeposits = serializeData(deposits)
+
+    return { ok: true, deposits: serializedDeposits }
   } catch (error) {
+    console.error('Get deposits error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message, deposits: [] }
     }
@@ -98,7 +105,7 @@ export async function requestDepositAction(amount: number): Promise<DepositResul
     const deposit = await prisma.deposit.create({
       data: {
         userId: sessionResult.user.id,
-        amount,
+        amount: new Decimal(amount),
         method: 'telebirr',
         status: 'pending',
       },
@@ -106,6 +113,7 @@ export async function requestDepositAction(amount: number): Promise<DepositResul
 
     return { ok: true, depositId: deposit.id }
   } catch (error) {
+    console.error('Request deposit error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
