@@ -43,12 +43,12 @@ function formatInvestment(inv: any) {
     userId: inv.userId,
     planId: inv.planId,
     planName: inv.planName,
-    amount: inv.amount instanceof Decimal ? inv.amount.toString() : inv.amount,
-    profitRate: inv.profitRate instanceof Decimal ? inv.profitRate.toString() : inv.profitRate,
+    amount: inv.amount instanceof Decimal ? inv.amount.toString() : String(inv.amount),
+    profitRate: inv.profitRate instanceof Decimal ? inv.profitRate.toString() : String(inv.profitRate),
     returnDays: inv.returnDays,
     startTimestamp: typeof inv.startTimestamp === 'bigint' ? Number(inv.startTimestamp) : inv.startTimestamp,
     endTimestamp: typeof inv.endTimestamp === 'bigint' ? Number(inv.endTimestamp) : inv.endTimestamp,
-    accumulatedEarnings: inv.accumulatedEarnings instanceof Decimal ? inv.accumulatedEarnings.toString() : inv.accumulatedEarnings,
+    accumulatedEarnings: inv.accumulatedEarnings instanceof Decimal ? inv.accumulatedEarnings.toString() : String(inv.accumulatedEarnings),
     lastCalculatedTimestamp: typeof inv.lastCalculatedTimestamp === 'bigint' ? Number(inv.lastCalculatedTimestamp) : inv.lastCalculatedTimestamp,
     status: inv.status as 'active' | 'completed',
   }
@@ -61,14 +61,19 @@ export async function investAction(input: {
   profitRate: number | string
 }): Promise<InvestmentResult> {
   try {
+    console.log('💰 Starting investment...')
+    console.log('📊 Input:', input)
+
     // Get current user from session
     const { cookies } = await import('next/headers')
     const cookieStore = await cookies()
     const token = cookieStore.get('sfg_session')?.value
 
     if (!token) {
+      console.log('❌ No session token found')
       return { ok: false, error: 'Not authenticated' }
     }
+    console.log('✅ Session token found')
 
     const session = await prisma.session.findUnique({
       where: { token },
@@ -76,22 +81,31 @@ export async function investAction(input: {
     })
 
     if (!session || !session.user) {
+      console.log('❌ User not found in session')
       return { ok: false, error: 'User not found' }
     }
+    console.log('✅ User found:', session.user.id)
 
     // Convert string inputs to appropriate types
     const amount = typeof input.amount === 'string' ? parseFloat(input.amount) : input.amount
     const profitRate = typeof input.profitRate === 'string' ? parseFloat(input.profitRate) : input.profitRate
 
+    console.log('💵 Amount:', amount, 'ProfitRate:', profitRate)
+
     if (!Number.isFinite(amount) || amount <= 0) {
+      console.log('❌ Invalid investment amount:', amount)
       return { ok: false, error: 'Invalid investment amount' }
     }
 
     if (!Number.isFinite(profitRate) || profitRate < 0) {
+      console.log('❌ Invalid profit rate:', profitRate)
       return { ok: false, error: 'Invalid profit rate' }
     }
 
+    console.log('✅ Validation passed')
+
     // Create investment record
+    console.log('🔄 Creating investment in database...')
     const investment = await prisma.investment.create({
       data: {
         userId: session.user.id,
@@ -107,18 +121,27 @@ export async function investAction(input: {
         status: 'active',
       },
     })
+    console.log('✅ Investment created in DB:', investment.id)
 
     // Format and serialize the investment
+    console.log('🔄 Formatting investment...')
     const formattedInvestment = formatInvestment(investment)
-    const serializedInvestment = serializeData(formattedInvestment)
+    console.log('✅ Investment formatted')
 
+    console.log('🔄 Serializing investment...')
+    const serializedInvestment = serializeData(formattedInvestment)
+    console.log('✅ Investment serialized')
+
+    console.log('✅ Investment action successful')
     return {
       ok: true,
       investment: serializedInvestment,
     }
   } catch (error) {
-    console.error('Investment error:', error)
+    console.error('❌ Investment error:', error)
     if (error instanceof Error) {
+      console.error('Error message:', error.message)
+      console.error('Error stack:', error.stack)
       return { ok: false, error: error.message }
     }
     return { ok: false, error: 'Investment creation failed' }
@@ -127,11 +150,14 @@ export async function investAction(input: {
 
 export async function getInvestmentsAction(): Promise<InvestmentResult> {
   try {
+    console.log('📋 Fetching investments...')
+
     const { cookies } = await import('next/headers')
     const cookieStore = await cookies()
     const token = cookieStore.get('sfg_session')?.value
 
     if (!token) {
+      console.log('❌ No session token found')
       return { ok: false, error: 'Not authenticated', investments: [] }
     }
 
@@ -141,13 +167,16 @@ export async function getInvestmentsAction(): Promise<InvestmentResult> {
     })
 
     if (!session || !session.user) {
+      console.log('❌ User not found in session')
       return { ok: false, error: 'User not found', investments: [] }
     }
+    console.log('✅ User found:', session.user.id)
 
     const investments = await prisma.investment.findMany({
       where: { userId: session.user.id },
       orderBy: { createdAt: 'desc' },
     })
+    console.log('✅ Found', investments.length, 'investments')
 
     // Format and serialize all investments
     const formattedInvestments = investments.map(formatInvestment)
@@ -158,7 +187,7 @@ export async function getInvestmentsAction(): Promise<InvestmentResult> {
       investments: serializedInvestments,
     }
   } catch (error) {
-    console.error('Get investments error:', error)
+    console.error('❌ Get investments error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message, investments: [] }
     }
@@ -168,15 +197,20 @@ export async function getInvestmentsAction(): Promise<InvestmentResult> {
 
 export async function recalculateInvestmentAction(investmentId: string): Promise<InvestmentResult> {
   try {
+    console.log('🔄 Recalculating investment:', investmentId)
+
     const investment = await prisma.investment.findUnique({
       where: { id: investmentId },
     })
 
     if (!investment) {
+      console.log('❌ Investment not found')
       return { ok: false, error: 'Investment not found' }
     }
+    console.log('✅ Investment found')
 
     if (investment.status === 'completed') {
+      console.log('ℹ️ Investment already completed')
       const formattedInvestment = formatInvestment(investment)
       const serializedInvestment = serializeData(formattedInvestment)
       return { ok: true, investment: serializedInvestment }
@@ -186,6 +220,8 @@ export async function recalculateInvestmentAction(investmentId: string): Promise
     const elapsedSeconds = Number(now - investment.startTimestamp)
     const elapsedDays = elapsedSeconds / (24 * 60 * 60)
 
+    console.log('⏱️ Elapsed days:', elapsedDays)
+
     const amountNum = investment.amount instanceof Decimal ? investment.amount.toNumber() : Number(investment.amount)
     const profitRateNum = investment.profitRate instanceof Decimal ? investment.profitRate.toNumber() : Number(investment.profitRate)
 
@@ -193,9 +229,12 @@ export async function recalculateInvestmentAction(investmentId: string): Promise
     let status = investment.status
 
     if (now >= investment.endTimestamp) {
+      console.log('✅ Investment period completed')
       accumulatedEarnings = amountNum * (profitRateNum / 100) * investment.returnDays
       status = 'completed'
     }
+
+    console.log('💰 Accumulated earnings:', accumulatedEarnings)
 
     const updated = await prisma.investment.update({
       where: { id: investmentId },
@@ -205,6 +244,7 @@ export async function recalculateInvestmentAction(investmentId: string): Promise
         status,
       },
     })
+    console.log('✅ Investment updated')
 
     // Format and serialize the updated investment
     const formattedInvestment = formatInvestment(updated)
@@ -215,7 +255,7 @@ export async function recalculateInvestmentAction(investmentId: string): Promise
       investment: serializedInvestment,
     }
   } catch (error) {
-    console.error('Recalculate investment error:', error)
+    console.error('❌ Recalculate investment error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
