@@ -46,7 +46,7 @@ export default function LoginPage() {
     const success = await login(normalizedPhone, formData.password)
     if (success) {
       // Redirect to dashboard
-      router.push('/dashboard')
+      router.push('/')
     }
   }
 
