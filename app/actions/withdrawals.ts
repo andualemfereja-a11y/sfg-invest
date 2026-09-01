@@ -1,6 +1,8 @@
 'use server'
 
 import { prisma } from '@/lib/db'
+import { serializeData } from '@/lib/serialize'
+import { Decimal } from '@prisma/client/runtime/library'
 
 export interface WithdrawalResult {
   ok: boolean
@@ -8,25 +10,39 @@ export interface WithdrawalResult {
   withdrawal?: {
     id: string
     userId: string
-    amount: number
+    amount: string | number
     method: string
     telebirrPhone: string
     status: 'pending' | 'completed' | 'rejected'
-    requestedAt: number
-    pendingUntil: number
-    completedAt: number | null
+    requestedAt: number | string
+    pendingUntil: number | string
+    completedAt: number | string | null
   }
   withdrawals?: Array<{
     id: string
     userId: string
-    amount: number
+    amount: string | number
     method: string
     telebirrPhone: string
     status: 'pending' | 'completed' | 'rejected'
-    requestedAt: number
-    pendingUntil: number
-    completedAt: number | null
+    requestedAt: number | string
+    pendingUntil: number | string
+    completedAt: number | string | null
   }>
+}
+
+function formatWithdrawal(w: any) {
+  return {
+    id: w.id,
+    userId: w.userId,
+    amount: w.amount instanceof Decimal ? w.amount.toString() : w.amount,
+    method: w.method,
+    telebirrPhone: w.telebirrPhone,
+    status: w.status as 'pending' | 'completed' | 'rejected',
+    requestedAt: typeof w.requestedAt === 'bigint' ? Number(w.requestedAt) : w.requestedAt,
+    pendingUntil: typeof w.pendingUntil === 'bigint' ? Number(w.pendingUntil) : w.pendingUntil,
+    completedAt: w.completedAt === null ? null : (typeof w.completedAt === 'bigint' ? Number(w.completedAt) : w.completedAt),
+  }
 }
 
 export async function requestWithdrawalAction(input: {
@@ -63,31 +79,25 @@ export async function requestWithdrawalAction(input: {
     const withdrawal = await prisma.withdrawal.create({
       data: {
         userId: session.user.id,
-        amount: input.amount,
+        amount: new Decimal(input.amount),
         method: 'telebirr',
         telebirrPhone: input.telebirrPhone,
         status: 'pending',
-        requestedAt: now,
-        pendingUntil,
+        requestedAt: BigInt(now),
+        pendingUntil: BigInt(pendingUntil),
         completedAt: null,
       },
     })
 
+    const formattedWithdrawal = formatWithdrawal(withdrawal)
+    const serializedWithdrawal = serializeData(formattedWithdrawal)
+
     return {
       ok: true,
-      withdrawal: {
-        id: withdrawal.id,
-        userId: withdrawal.userId,
-        amount: withdrawal.amount,
-        method: withdrawal.method,
-        telebirrPhone: withdrawal.telebirrPhone,
-        status: withdrawal.status as 'pending' | 'completed' | 'rejected',
-        requestedAt: withdrawal.requestedAt,
-        pendingUntil: withdrawal.pendingUntil,
-        completedAt: withdrawal.completedAt,
-      },
+      withdrawal: serializedWithdrawal,
     }
   } catch (error) {
+    console.error('Withdrawal request error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
@@ -119,21 +129,15 @@ export async function getWithdrawalsAction(): Promise<WithdrawalResult> {
       orderBy: { requestedAt: 'desc' },
     })
 
+    const formattedWithdrawals = withdrawals.map(formatWithdrawal)
+    const serializedWithdrawals = serializeData(formattedWithdrawals)
+
     return {
       ok: true,
-      withdrawals: withdrawals.map((w) => ({
-        id: w.id,
-        userId: w.userId,
-        amount: w.amount,
-        method: w.method,
-        telebirrPhone: w.telebirrPhone,
-        status: w.status as 'pending' | 'completed' | 'rejected',
-        requestedAt: w.requestedAt,
-        pendingUntil: w.pendingUntil,
-        completedAt: w.completedAt,
-      })),
+      withdrawals: serializedWithdrawals,
     }
   } catch (error) {
+    console.error('Get withdrawals error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message, withdrawals: [] }
     }
@@ -182,21 +186,15 @@ export async function cancelWithdrawalAction(withdrawalId: string): Promise<With
       data: { status: 'rejected' },
     })
 
+    const formattedWithdrawal = formatWithdrawal(updated)
+    const serializedWithdrawal = serializeData(formattedWithdrawal)
+
     return {
       ok: true,
-      withdrawal: {
-        id: updated.id,
-        userId: updated.userId,
-        amount: updated.amount,
-        method: updated.method,
-        telebirrPhone: updated.telebirrPhone,
-        status: updated.status as 'pending' | 'completed' | 'rejected',
-        requestedAt: updated.requestedAt,
-        pendingUntil: updated.pendingUntil,
-        completedAt: updated.completedAt,
-      },
+      withdrawal: serializedWithdrawal,
     }
   } catch (error) {
+    console.error('Cancel withdrawal error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
