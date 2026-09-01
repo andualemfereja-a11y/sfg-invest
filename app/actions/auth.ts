@@ -6,6 +6,8 @@ import { hashPassword, verifyPassword, createSession, deleteSession } from '@/li
 import { registerSchema, loginSchema } from '@/lib/validation'
 import { normalizePhone } from '@/lib/format'
 import { cookies } from 'next/headers'
+import { serializeData } from '@/lib/serialize'
+import { Decimal } from '@prisma/client/runtime/library'
 
 const SESSION_COOKIE_NAME = 'sfg_session'
 
@@ -44,7 +46,7 @@ export async function registerAction(input: unknown): Promise<AuthResult> {
         lastName: parsed.lastName,
         phone,
         passwordHash,
-        baseBalance: 0,
+        baseBalance: new Decimal(0),
       },
     })
 
@@ -67,6 +69,7 @@ export async function registerAction(input: unknown): Promise<AuthResult> {
       token,
     }
   } catch (error) {
+    console.error('Registration error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
@@ -118,6 +121,7 @@ export async function loginAction(input: unknown): Promise<AuthResult> {
       token,
     }
   } catch (error) {
+    console.error('Login error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
@@ -138,6 +142,7 @@ export async function logoutAction(): Promise<AuthResult> {
 
     return { ok: true }
   } catch (error) {
+    console.error('Logout error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
@@ -152,8 +157,8 @@ export async function getSessionAction(): Promise<{
     firstName: string
     lastName: string
     phone: string
-    baseBalance: number
-    createdAt: Date
+    baseBalance: string | number
+    createdAt: string
   } | null
   error?: string
 }> {
@@ -192,8 +197,12 @@ export async function getSessionAction(): Promise<{
       return { ok: true, user: null }
     }
 
-    return { ok: true, user: session.user }
+    // Serialize the user data to handle Decimal and Date types
+    const serializedUser = serializeData(session.user)
+
+    return { ok: true, user: serializedUser }
   } catch (error) {
+    console.error('Session error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message, user: null }
     }
