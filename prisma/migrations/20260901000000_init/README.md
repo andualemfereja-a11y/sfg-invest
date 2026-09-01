@@ -1,0 +1,3 @@
+---
+schema: ./migration.sql
+---
