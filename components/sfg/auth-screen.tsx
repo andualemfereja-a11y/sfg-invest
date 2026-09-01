@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { TrendingUp, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Field, PasswordField } from './field'
@@ -91,16 +91,37 @@ function LoginForm({ onSwitch }: { onSwitch: () => void }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-    const res = login(phone, password)
-    if (!res.ok) {
-      setError(res.error ?? 'Unable to sign in.')
-      setLoading(false)
-    }
-  }
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault()
+      
+      // Clear previous errors
+      setError('')
+      
+      // Validate inputs
+      if (!phone.trim()) {
+        setError('Phone number is required')
+        return
+      }
+      if (!password.trim()) {
+        setError('Password is required')
+        return
+      }
+      
+      try {
+        setLoading(true)
+        const res = await login(phone, password)
+        if (!res.ok) {
+          setError(res.error ?? 'Unable to sign in.')
+        }
+        // On success, don't set loading to false - the router will navigate
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An unexpected error occurred')
+        setLoading(false)
+      }
+    },
+    [login, phone, password],
+  )
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-5">
@@ -115,6 +136,7 @@ function LoginForm({ onSwitch }: { onSwitch: () => void }) {
         placeholder="09XXXXXXXX"
         value={phone}
         onChange={(e) => setPhone(e.target.value)}
+        disabled={loading}
       />
       <PasswordField
         label="Password"
@@ -123,6 +145,7 @@ function LoginForm({ onSwitch }: { onSwitch: () => void }) {
         placeholder="Enter your password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
+        disabled={loading}
       />
       <Button
         type="submit"
@@ -136,7 +159,8 @@ function LoginForm({ onSwitch }: { onSwitch: () => void }) {
         <button
           type="button"
           onClick={onSwitch}
-          className="font-semibold text-primary-foreground underline decoration-primary underline-offset-2"
+          disabled={loading}
+          className="font-semibold text-primary-foreground underline decoration-primary underline-offset-2 disabled:opacity-50"
         >
           Register
         </button>
@@ -157,20 +181,61 @@ function RegisterForm({ onSwitch }: { onSwitch: () => void }) {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  function set<K extends keyof typeof values>(key: K, value: string) {
-    setValues((v) => ({ ...v, [key]: value }))
-  }
+  const set = useCallback(
+    <K extends keyof typeof values>(key: K, value: string) => {
+      setValues((v) => ({ ...v, [key]: value }))
+    },
+    [],
+  )
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-    const res = register(values)
-    if (!res.ok) {
-      setError(res.error ?? 'Unable to register.')
-      setLoading(false)
-    }
-  }
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault()
+      
+      // Clear previous errors
+      setError('')
+      
+      // Validate inputs
+      if (!values.firstName.trim()) {
+        setError('First name is required')
+        return
+      }
+      if (!values.lastName.trim()) {
+        setError('Last name is required')
+        return
+      }
+      if (!values.phone.trim()) {
+        setError('Phone number is required')
+        return
+      }
+      if (!values.password.trim()) {
+        setError('Password is required')
+        return
+      }
+      if (values.password.length < 6) {
+        setError('Password must be at least 6 characters')
+        return
+      }
+      if (values.password !== values.confirmPassword) {
+        setError('Passwords do not match')
+        return
+      }
+      
+      try {
+        setLoading(true)
+        const res = await register(values)
+        if (!res.ok) {
+          setError(res.error ?? 'Unable to register.')
+          setLoading(false)
+        }
+        // On success, don't set loading to false - the router will navigate
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'An unexpected error occurred')
+        setLoading(false)
+      }
+    },
+    [register, values],
+  )
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-5">
@@ -184,6 +249,7 @@ function RegisterForm({ onSwitch }: { onSwitch: () => void }) {
           placeholder="John"
           value={values.firstName}
           onChange={(e) => set('firstName', e.target.value)}
+          disabled={loading}
         />
         <Field
           label="Last Name"
@@ -192,6 +258,7 @@ function RegisterForm({ onSwitch }: { onSwitch: () => void }) {
           placeholder="Doe"
           value={values.lastName}
           onChange={(e) => set('lastName', e.target.value)}
+          disabled={loading}
         />
       </div>
       <Field
@@ -203,6 +270,7 @@ function RegisterForm({ onSwitch }: { onSwitch: () => void }) {
         placeholder="09XXXXXXXX"
         value={values.phone}
         onChange={(e) => set('phone', e.target.value)}
+        disabled={loading}
       />
       <PasswordField
         label="Password"
@@ -211,6 +279,7 @@ function RegisterForm({ onSwitch }: { onSwitch: () => void }) {
         placeholder="At least 6 characters"
         value={values.password}
         onChange={(e) => set('password', e.target.value)}
+        disabled={loading}
       />
       <PasswordField
         label="Confirm Password"
@@ -219,6 +288,7 @@ function RegisterForm({ onSwitch }: { onSwitch: () => void }) {
         placeholder="Re-enter your password"
         value={values.confirmPassword}
         onChange={(e) => set('confirmPassword', e.target.value)}
+        disabled={loading}
       />
       <Button
         type="submit"
@@ -232,7 +302,8 @@ function RegisterForm({ onSwitch }: { onSwitch: () => void }) {
         <button
           type="button"
           onClick={onSwitch}
-          className="font-semibold text-primary-foreground underline decoration-primary underline-offset-2"
+          disabled={loading}
+          className="font-semibold text-primary-foreground underline decoration-primary underline-offset-2 disabled:opacity-50"
         >
           Login
         </button>
