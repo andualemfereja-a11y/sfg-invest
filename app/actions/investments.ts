@@ -2,6 +2,7 @@
 
 import { prisma } from '@/lib/db'
 import { Decimal } from '@prisma/client/runtime/library'
+import { serializeData } from '@/lib/serialize'
 
 export interface InvestmentResult {
   ok: boolean
@@ -82,6 +83,14 @@ export async function investAction(input: {
     const amount = typeof input.amount === 'string' ? parseFloat(input.amount) : input.amount
     const profitRate = typeof input.profitRate === 'string' ? parseFloat(input.profitRate) : input.profitRate
 
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return { ok: false, error: 'Invalid investment amount' }
+    }
+
+    if (!Number.isFinite(profitRate) || profitRate < 0) {
+      return { ok: false, error: 'Invalid profit rate' }
+    }
+
     // Create investment record
     const investment = await prisma.investment.create({
       data: {
@@ -99,9 +108,13 @@ export async function investAction(input: {
       },
     })
 
+    // Format and serialize the investment
+    const formattedInvestment = formatInvestment(investment)
+    const serializedInvestment = serializeData(formattedInvestment)
+
     return {
       ok: true,
-      investment: formatInvestment(investment),
+      investment: serializedInvestment,
     }
   } catch (error) {
     console.error('Investment error:', error)
@@ -133,11 +146,16 @@ export async function getInvestmentsAction(): Promise<InvestmentResult> {
 
     const investments = await prisma.investment.findMany({
       where: { userId: session.user.id },
+      orderBy: { createdAt: 'desc' },
     })
+
+    // Format and serialize all investments
+    const formattedInvestments = investments.map(formatInvestment)
+    const serializedInvestments = serializeData(formattedInvestments)
 
     return {
       ok: true,
-      investments: investments.map(formatInvestment),
+      investments: serializedInvestments,
     }
   } catch (error) {
     console.error('Get investments error:', error)
@@ -159,15 +177,17 @@ export async function recalculateInvestmentAction(investmentId: string): Promise
     }
 
     if (investment.status === 'completed') {
-      return { ok: true, investment: formatInvestment(investment) }
+      const formattedInvestment = formatInvestment(investment)
+      const serializedInvestment = serializeData(formattedInvestment)
+      return { ok: true, investment: serializedInvestment }
     }
 
     const now = BigInt(Math.floor(Date.now() / 1000))
     const elapsedSeconds = Number(now - investment.startTimestamp)
     const elapsedDays = elapsedSeconds / (24 * 60 * 60)
 
-    const amountNum = investment.amount instanceof Decimal ? investment.amount.toNumber() : investment.amount as number
-    const profitRateNum = investment.profitRate instanceof Decimal ? investment.profitRate.toNumber() : investment.profitRate as number
+    const amountNum = investment.amount instanceof Decimal ? investment.amount.toNumber() : Number(investment.amount)
+    const profitRateNum = investment.profitRate instanceof Decimal ? investment.profitRate.toNumber() : Number(investment.profitRate)
 
     let accumulatedEarnings = amountNum * (profitRateNum / 100) * elapsedDays
     let status = investment.status
@@ -186,9 +206,13 @@ export async function recalculateInvestmentAction(investmentId: string): Promise
       },
     })
 
+    // Format and serialize the updated investment
+    const formattedInvestment = formatInvestment(updated)
+    const serializedInvestment = serializeData(formattedInvestment)
+
     return {
       ok: true,
-      investment: formatInvestment(updated),
+      investment: serializedInvestment,
     }
   } catch (error) {
     console.error('Recalculate investment error:', error)
