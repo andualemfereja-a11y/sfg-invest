@@ -20,12 +20,18 @@ export interface AuthResult {
 
 export async function registerAction(input: unknown): Promise<AuthResult> {
   try {
+    console.log('🔐 Starting registration...')
+    
+    // Validate input
     const parsed = registerSchema.parse(input)
+    console.log('✅ Input validated')
+    
     const phone = normalizePhone(parsed.phone)
-
     if (!phone) {
+      console.log('❌ Invalid phone number')
       return { ok: false, error: 'Invalid phone number' }
     }
+    console.log('✅ Phone normalized:', phone)
 
     // Check if user already exists
     const existing = await prisma.user.findUnique({
@@ -33,11 +39,14 @@ export async function registerAction(input: unknown): Promise<AuthResult> {
     })
 
     if (existing) {
+      console.log('❌ User already exists')
       return { ok: false, error: 'This phone number is already registered' }
     }
+    console.log('✅ User does not exist')
 
     // Hash password
     const passwordHash = await hashPassword(parsed.password)
+    console.log('✅ Password hashed')
 
     // Create user
     const user = await prisma.user.create({
@@ -49,27 +58,44 @@ export async function registerAction(input: unknown): Promise<AuthResult> {
         baseBalance: new Decimal(0),
       },
     })
+    console.log('✅ User created in DB:', user.id)
 
     // Create session
-    const token = await createSession(user.id)
+    let token: string
+    try {
+      token = await createSession(user.id)
+      console.log('✅ Session created')
+    } catch (sessionError) {
+      console.error('❌ Session creation failed:', sessionError)
+      // Delete user if session creation fails
+      await prisma.user.delete({ where: { id: user.id } })
+      return { ok: false, error: 'Failed to create session. Please try again.' }
+    }
 
     // Set session cookie
-    const cookieStore = await cookies()
-    cookieStore.set(SESSION_COOKIE_NAME, token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60, // 30 days
-      path: '/',
-    })
+    try {
+      const cookieStore = await cookies()
+      cookieStore.set(SESSION_COOKIE_NAME, token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60,
+        path: '/',
+      })
+      console.log('✅ Cookie set')
+    } catch (cookieError) {
+      console.error('❌ Cookie error (non-critical):', cookieError)
+      // Don't fail the whole registration for cookie issues
+    }
 
+    console.log('✅ Registration successful')
     return {
       ok: true,
       userId: user.id,
       token,
     }
   } catch (error) {
-    console.error('Registration error:', error)
+    console.error('❌ Registration error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
@@ -79,12 +105,17 @@ export async function registerAction(input: unknown): Promise<AuthResult> {
 
 export async function loginAction(input: unknown): Promise<AuthResult> {
   try {
+    console.log('🔐 Starting login...')
+    
     const parsed = loginSchema.parse(input)
+    console.log('✅ Input validated')
+    
     const phone = normalizePhone(parsed.phone)
-
     if (!phone) {
+      console.log('❌ Invalid phone number')
       return { ok: false, error: 'Invalid phone number' }
     }
+    console.log('✅ Phone normalized')
 
     // Find user
     const user = await prisma.user.findUnique({
@@ -92,36 +123,52 @@ export async function loginAction(input: unknown): Promise<AuthResult> {
     })
 
     if (!user) {
+      console.log('❌ User not found')
       return { ok: false, error: 'Incorrect phone number or password' }
     }
+    console.log('✅ User found')
 
     // Verify password
     const passwordMatch = await verifyPassword(parsed.password, user.passwordHash)
-
     if (!passwordMatch) {
+      console.log('❌ Password mismatch')
       return { ok: false, error: 'Incorrect phone number or password' }
     }
+    console.log('✅ Password verified')
 
     // Create session
-    const token = await createSession(user.id)
+    let token: string
+    try {
+      token = await createSession(user.id)
+      console.log('✅ Session created')
+    } catch (sessionError) {
+      console.error('❌ Session creation failed:', sessionError)
+      return { ok: false, error: 'Failed to create session. Please try again.' }
+    }
 
     // Set session cookie
-    const cookieStore = await cookies()
-    cookieStore.set(SESSION_COOKIE_NAME, token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 30 * 24 * 60 * 60, // 30 days
-      path: '/',
-    })
+    try {
+      const cookieStore = await cookies()
+      cookieStore.set(SESSION_COOKIE_NAME, token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60,
+        path: '/',
+      })
+      console.log('✅ Cookie set')
+    } catch (cookieError) {
+      console.error('❌ Cookie error (non-critical):', cookieError)
+    }
 
+    console.log('✅ Login successful')
     return {
       ok: true,
       userId: user.id,
       token,
     }
   } catch (error) {
-    console.error('Login error:', error)
+    console.error('❌ Login error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
@@ -131,18 +178,22 @@ export async function loginAction(input: unknown): Promise<AuthResult> {
 
 export async function logoutAction(): Promise<AuthResult> {
   try {
+    console.log('🔐 Starting logout...')
+    
     const cookieStore = await cookies()
     const token = cookieStore.get(SESSION_COOKIE_NAME)?.value
 
     if (token) {
       await deleteSession(token)
+      console.log('✅ Session deleted')
     }
 
     cookieStore.delete(SESSION_COOKIE_NAME)
+    console.log('✅ Cookie deleted')
 
     return { ok: true }
   } catch (error) {
-    console.error('Logout error:', error)
+    console.error('❌ Logout error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
@@ -202,7 +253,7 @@ export async function getSessionAction(): Promise<{
 
     return { ok: true, user: serializedUser }
   } catch (error) {
-    console.error('Session error:', error)
+    console.error('❌ Session error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message, user: null }
     }
