@@ -3,6 +3,7 @@
 
 import { prisma } from '@/lib/db'
 import { getSessionAction } from './auth'
+import { serializeData } from '@/lib/serialize'
 
 export interface FinancialSummary {
   ok: boolean
@@ -11,8 +12,8 @@ export interface FinancialSummary {
     firstName: string
     lastName: string
     phone: string
-    baseBalance: number
-    createdAt: Date
+    baseBalance: string | number
+    createdAt: string
   }
   summary?: {
     availableBalance: number
@@ -76,8 +77,10 @@ export async function getFinancialSummaryAction(): Promise<FinancialSummary> {
     let todayEarnings = 0
     for (const inv of activeInvestments) {
       const dailyEarnings = Number(inv.amount) * Number(inv.profitRate)
-      const todayFrom = Math.max(todayStartMs, inv.startTimestamp)
-      const todayTo = Math.min(now, inv.endTimestamp)
+      const startTs = typeof inv.startTimestamp === 'bigint' ? Number(inv.startTimestamp) * 1000 : inv.startTimestamp
+      const endTs = typeof inv.endTimestamp === 'bigint' ? Number(inv.endTimestamp) * 1000 : inv.endTimestamp
+      const todayFrom = Math.max(todayStartMs, startTs)
+      const todayTo = Math.min(now, endTs)
       if (todayTo > todayFrom) {
         todayEarnings += dailyEarnings * ((todayTo - todayFrom) / MS_PER_DAY)
       }
@@ -85,9 +88,12 @@ export async function getFinancialSummaryAction(): Promise<FinancialSummary> {
 
     const availableBalance = Math.max(0, Number(user.baseBalance))
 
+    // Serialize user data
+    const serializedUser = serializeData(user)
+
     return {
       ok: true,
-      user,
+      user: serializedUser,
       summary: {
         availableBalance,
         totalInvested,
@@ -97,6 +103,7 @@ export async function getFinancialSummaryAction(): Promise<FinancialSummary> {
       },
     }
   } catch (error) {
+    console.error('Financial summary error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
