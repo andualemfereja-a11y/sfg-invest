@@ -1,6 +1,7 @@
 'use server'
 
 import { prisma } from '@/lib/db'
+import { Decimal } from '@prisma/client/runtime/library'
 
 export interface InvestmentResult {
   ok: boolean
@@ -10,13 +11,13 @@ export interface InvestmentResult {
     userId: string
     planId: string
     planName: string
-    amount: number
-    profitRate: number
+    amount: string | number
+    profitRate: string | number
     returnDays: number
-    startTimestamp: number
-    endTimestamp: number
-    accumulatedEarnings: number
-    lastCalculatedTimestamp: number
+    startTimestamp: number | string
+    endTimestamp: number | string
+    accumulatedEarnings: string | number
+    lastCalculatedTimestamp: number | string
     status: 'active' | 'completed'
   }
   investments?: Array<{
@@ -24,22 +25,39 @@ export interface InvestmentResult {
     userId: string
     planId: string
     planName: string
-    amount: number
-    profitRate: number
+    amount: string | number
+    profitRate: string | number
     returnDays: number
-    startTimestamp: number
-    endTimestamp: number
-    accumulatedEarnings: number
-    lastCalculatedTimestamp: number
+    startTimestamp: number | string
+    endTimestamp: number | string
+    accumulatedEarnings: string | number
+    lastCalculatedTimestamp: number | string
     status: 'active' | 'completed'
   }>
+}
+
+function formatInvestment(inv: any) {
+  return {
+    id: inv.id,
+    userId: inv.userId,
+    planId: inv.planId,
+    planName: inv.planName,
+    amount: inv.amount instanceof Decimal ? inv.amount.toString() : inv.amount,
+    profitRate: inv.profitRate instanceof Decimal ? inv.profitRate.toString() : inv.profitRate,
+    returnDays: inv.returnDays,
+    startTimestamp: typeof inv.startTimestamp === 'bigint' ? Number(inv.startTimestamp) : inv.startTimestamp,
+    endTimestamp: typeof inv.endTimestamp === 'bigint' ? Number(inv.endTimestamp) : inv.endTimestamp,
+    accumulatedEarnings: inv.accumulatedEarnings instanceof Decimal ? inv.accumulatedEarnings.toString() : inv.accumulatedEarnings,
+    lastCalculatedTimestamp: typeof inv.lastCalculatedTimestamp === 'bigint' ? Number(inv.lastCalculatedTimestamp) : inv.lastCalculatedTimestamp,
+    status: inv.status as 'active' | 'completed',
+  }
 }
 
 export async function investAction(input: {
   planId: string
   planName: string
-  amount: number
-  profitRate: number
+  amount: number | string
+  profitRate: number | string
 }): Promise<InvestmentResult> {
   try {
     // Get current user from session
@@ -60,41 +78,33 @@ export async function investAction(input: {
       return { ok: false, error: 'User not found' }
     }
 
+    // Convert string inputs to appropriate types
+    const amount = typeof input.amount === 'string' ? parseFloat(input.amount) : input.amount
+    const profitRate = typeof input.profitRate === 'string' ? parseFloat(input.profitRate) : input.profitRate
+
     // Create investment record
     const investment = await prisma.investment.create({
       data: {
         userId: session.user.id,
         planId: input.planId,
         planName: input.planName,
-        amount: input.amount,
-        profitRate: input.profitRate,
+        amount: new Decimal(amount),
+        profitRate: new Decimal(profitRate),
         returnDays: 180,
-        startTimestamp: Math.floor(Date.now() / 1000),
-        endTimestamp: Math.floor(Date.now() / 1000) + 180 * 24 * 60 * 60,
-        accumulatedEarnings: 0,
-        lastCalculatedTimestamp: Math.floor(Date.now() / 1000),
+        startTimestamp: BigInt(Math.floor(Date.now() / 1000)),
+        endTimestamp: BigInt(Math.floor(Date.now() / 1000) + 180 * 24 * 60 * 60),
+        accumulatedEarnings: new Decimal(0),
+        lastCalculatedTimestamp: BigInt(Math.floor(Date.now() / 1000)),
         status: 'active',
       },
     })
 
     return {
       ok: true,
-      investment: {
-        id: investment.id,
-        userId: investment.userId,
-        planId: investment.planId,
-        planName: investment.planName,
-        amount: investment.amount,
-        profitRate: investment.profitRate,
-        returnDays: investment.returnDays,
-        startTimestamp: investment.startTimestamp,
-        endTimestamp: investment.endTimestamp,
-        accumulatedEarnings: investment.accumulatedEarnings,
-        lastCalculatedTimestamp: investment.lastCalculatedTimestamp,
-        status: investment.status as 'active' | 'completed',
-      },
+      investment: formatInvestment(investment),
     }
   } catch (error) {
+    console.error('Investment error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
@@ -127,22 +137,10 @@ export async function getInvestmentsAction(): Promise<InvestmentResult> {
 
     return {
       ok: true,
-      investments: investments.map((inv) => ({
-        id: inv.id,
-        userId: inv.userId,
-        planId: inv.planId,
-        planName: inv.planName,
-        amount: inv.amount,
-        profitRate: inv.profitRate,
-        returnDays: inv.returnDays,
-        startTimestamp: inv.startTimestamp,
-        endTimestamp: inv.endTimestamp,
-        accumulatedEarnings: inv.accumulatedEarnings,
-        lastCalculatedTimestamp: inv.lastCalculatedTimestamp,
-        status: inv.status as 'active' | 'completed',
-      })),
+      investments: investments.map(formatInvestment),
     }
   } catch (error) {
+    console.error('Get investments error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message, investments: [] }
     }
@@ -161,25 +159,28 @@ export async function recalculateInvestmentAction(investmentId: string): Promise
     }
 
     if (investment.status === 'completed') {
-      return { ok: true, investment: investment as any }
+      return { ok: true, investment: formatInvestment(investment) }
     }
 
-    const now = Math.floor(Date.now() / 1000)
-    const elapsedSeconds = now - investment.startTimestamp
+    const now = BigInt(Math.floor(Date.now() / 1000))
+    const elapsedSeconds = Number(now - investment.startTimestamp)
     const elapsedDays = elapsedSeconds / (24 * 60 * 60)
 
-    let accumulatedEarnings = investment.amount * (investment.profitRate / 100) * elapsedDays
+    const amountNum = investment.amount instanceof Decimal ? investment.amount.toNumber() : investment.amount as number
+    const profitRateNum = investment.profitRate instanceof Decimal ? investment.profitRate.toNumber() : investment.profitRate as number
+
+    let accumulatedEarnings = amountNum * (profitRateNum / 100) * elapsedDays
     let status = investment.status
 
     if (now >= investment.endTimestamp) {
-      accumulatedEarnings = investment.amount * (investment.profitRate / 100) * investment.returnDays
+      accumulatedEarnings = amountNum * (profitRateNum / 100) * investment.returnDays
       status = 'completed'
     }
 
     const updated = await prisma.investment.update({
       where: { id: investmentId },
       data: {
-        accumulatedEarnings: Math.max(0, accumulatedEarnings),
+        accumulatedEarnings: new Decimal(Math.max(0, accumulatedEarnings)),
         lastCalculatedTimestamp: now,
         status,
       },
@@ -187,22 +188,10 @@ export async function recalculateInvestmentAction(investmentId: string): Promise
 
     return {
       ok: true,
-      investment: {
-        id: updated.id,
-        userId: updated.userId,
-        planId: updated.planId,
-        planName: updated.planName,
-        amount: updated.amount,
-        profitRate: updated.profitRate,
-        returnDays: updated.returnDays,
-        startTimestamp: updated.startTimestamp,
-        endTimestamp: updated.endTimestamp,
-        accumulatedEarnings: updated.accumulatedEarnings,
-        lastCalculatedTimestamp: updated.lastCalculatedTimestamp,
-        status: updated.status as 'active' | 'completed',
-      },
+      investment: formatInvestment(updated),
     }
   } catch (error) {
+    console.error('Recalculate investment error:', error)
     if (error instanceof Error) {
       return { ok: false, error: error.message }
     }
