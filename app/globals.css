@@ -82,6 +82,7 @@
   --radius: 0.9rem;
   --sidebar: oklch(0.985 0.008 95);
   --sidebar-foreground: oklch(0.24 0.012 75);
+  /* Use consistent primary yellow for sidebar too */
   --sidebar-primary: oklch(0.795 0.155 84);
   --sidebar-primary-foreground: oklch(0.26 0.03 80);
   --sidebar-accent: oklch(0.95 0.045 92);
@@ -117,8 +118,9 @@
   --chart-5: oklch(0.269 0 0);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
+  /* Use consistent white for sidebar primary in dark mode */
+  --sidebar-primary: oklch(0.922 0 0);
+  --sidebar-primary-foreground: oklch(0.205 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
@@ -153,8 +155,9 @@
     --chart-5: oklch(0.269 0 0);
     --sidebar: oklch(0.205 0 0);
     --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.488 0.243 264.376);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
+    /* Use consistent white for sidebar primary in dark mode */
+    --sidebar-primary: oklch(0.922 0 0);
+    --sidebar-primary-foreground: oklch(0.205 0 0);
     --sidebar-accent: oklch(0.269 0 0);
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
