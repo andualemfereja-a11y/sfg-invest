@@ -1,6 +1,6 @@
 'use server'
 
-import prisma from '@/lib/prisma'
+import { prisma } from '@/lib/db'
 import { Decimal } from '@prisma/client/runtime/library'
 import { cookies } from 'next/headers'
 import { serializeData } from '@/lib/serialize'
